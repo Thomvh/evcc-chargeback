@@ -1,0 +1,17 @@
+# Copy this file to a directory outside the repository. Put .env and smtp_password next to it (see the README).
+services:
+  evcc-chargeback:
+    image: evcc-chargeback:0.2.0
+    restart: unless-stopped
+    env_file: .env
+    secrets:
+      - smtp_password
+    volumes:
+      - data:/data
+
+secrets:
+  smtp_password:
+    file: ./smtp_password
+
+volumes:
+  data:

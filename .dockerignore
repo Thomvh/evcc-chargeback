@@ -1,0 +1,7 @@
+.env
+.git
+.venv
+deploy
+output
+**/*.egg-info
+**/__pycache__
