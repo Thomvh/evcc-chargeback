@@ -12,7 +12,7 @@ class PartialDelivery(Exception):
 
 
 class NotSent(Exception):
-    """The message was certainly not accepted: the failure came before the server took the message."""
+    """The message was certainly not accepted: the failure came before the send, or the server refused it."""
 
 
 def send(subject: str, text: str, *, host: str, port: int, user: str, password: str, sender: str,
@@ -44,7 +44,7 @@ def send(subject: str, text: str, *, host: str, port: int, user: str, password: 
     try:
         # An error from here on that is not a clear refusal leaves the result unknown: the caller must not retry.
         refused = smtp.send_message(message)
-    except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused) as error:
+    except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError) as error:
         raise NotSent(f"{host} refused the message: {error}") from error
     finally:
         try:

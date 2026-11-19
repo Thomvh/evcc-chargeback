@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from xml.sax.saxutils import escape
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -41,7 +41,7 @@ class Party:
 @dataclass(frozen=True)
 class Statement:
     number: str
-    issue_date: date
+    issued: datetime  # the moment the statement was made, aware, in the billing time zone
     period: date
     claimant: Party
     payer: Party
@@ -76,6 +76,11 @@ def statement_number(period: date) -> str:
     return f"EV-{period:%Y-%m}"
 
 
+def issued_label(moment: datetime) -> str:
+    """Date and time to the minute, as on the statement and in the log line of a recovery action."""
+    return f"{moment:%d-%m-%Y %H:%M}"
+
+
 def period_label(period: date) -> str:
     return f"{MONTHS_NL[period.month - 1]} {period.year}"
 
@@ -91,8 +96,8 @@ def euro(value: Decimal) -> str:
 
 
 def _party_block(label: str, party: Party, style) -> Paragraph:
-    lines = [f"<b>{label}</b>", party.name, *[line for line in party.address.split("\n") if line]]
-    return Paragraph("<br/>".join(lines), style)
+    lines = [party.name, *[line for line in party.address.split("\n") if line]]
+    return Paragraph("<br/>".join([f"<b>{label}</b>", *map(escape, lines)]), style)
 
 
 def render_pdf(statement: Statement, path: Path) -> Path:
@@ -116,7 +121,7 @@ def render_pdf(statement: Statement, path: Path) -> Path:
     meta = Table(
         [
             ["Nummer", statement.number],
-            ["Datum", f"{statement.issue_date:%d-%m-%Y}"],
+            ["Datum", issued_label(statement.issued)],
             ["Periode", period_label(statement.period)],
             ["Auto", statement.vehicle_label],
             ["Grondslag", Paragraph(escape(statement.basis), body)],
@@ -157,8 +162,8 @@ def render_pdf(statement: Statement, path: Path) -> Path:
     story += [table, Spacer(1, 8 * mm)]
 
     story.append(Paragraph(
-        f"Graag <b>{euro(statement.total)}</b> overmaken naar <b>{statement.iban}</b> "
-        f"t.n.v. {statement.claimant.name}, o.v.v. <b>{statement.number}</b>.", body))
+        f"Graag <b>{euro(statement.total)}</b> overmaken naar <b>{escape(statement.iban)}</b> "
+        f"t.n.v. {escape(statement.claimant.name)}, o.v.v. <b>{escape(statement.number)}</b>.", body))
     story += [Spacer(1, 6 * mm), Paragraph(FOOTER_AGREED if statement.fixed_tariff else FOOTER_EVCC, small)]
 
     doc.build(story)
