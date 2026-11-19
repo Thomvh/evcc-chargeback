@@ -284,6 +284,20 @@ def test_evcc_basis_with_an_agreement_is_a_settlement(run, monkeypatch):
     assert "€ 4,34" in text and "teruglevertarief" in text
 
 
+def test_options_file_fills_the_configuration(tmp_path, monkeypatch):
+    options = tmp_path / "options.json"
+    options.write_text(json.dumps({"smtp_port": 465, "allow_incomplete": True, "mail_cc": "", "evcc_url": "http://a"}))
+    monkeypatch.setenv("EVCC_CHARGEBACK_OPTIONS", str(options))
+    monkeypatch.setenv("EVCC_URL", "http://from-env")
+    for name in ("SMTP_PORT", "ALLOW_INCOMPLETE", "MAIL_CC"):
+        monkeypatch.delenv(name, raising=False)
+    cli.load_options()
+    assert (cli.env("SMTP_PORT"), cli.env("ALLOW_INCOMPLETE"), cli.env("EVCC_URL")) == ("465", "true", "http://from-env")
+    assert cli.env("MAIL_CC", "none") == "none"
+    for name in ("SMTP_PORT", "ALLOW_INCOMPLETE"):
+        monkeypatch.delenv(name)
+
+
 def test_pdf_contains_total_and_reference(tmp_path):
     statement = Statement("EV-2026-10", date(2026, 11, 2), OCTOBER, Party("A. Person", "Street 1\n1234 AB Town"),
                           Party("Holding B.V."), "NL00TEST0123456789", "Polestar 2",

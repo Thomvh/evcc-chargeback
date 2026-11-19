@@ -122,9 +122,27 @@ sent yet. Without `FIRST_PERIOD`, the tool only tries the previous month.
 
 Do not set `RUN_AT` between 02:00 and 03:00. The change to and from summer time makes this hour unreliable.
 
+## Installation as a Home Assistant app
+
+Use this when evcc runs as an app (add-on) on the same Home Assistant.
+
+1. In Home Assistant, go to Settings > Apps > App store.
+2. Open the menu, select Repositories and add `https://github.com/Thomvh/evcc-chargeback`.
+3. Install the app "evcc chargeback".
+4. Fill in the values on the Configuration tab. They are the same values as in `.env.example`.
+5. Start the app and read the Log tab.
+
+The app does the schedule (`--schedule`). It writes the statements and records to the folder
+`/share/evcc-chargeback` of Home Assistant. Include this folder in your backups.
+
+`evcc_url` is the address of evcc. For the evcc app this is `http://49686a9f-evcc:7070`. If your evcc app has a
+different host name, find it on the Info tab of the evcc app.
+
+Home Assistant builds the app on your device. This takes some minutes.
+
 ## Installation as a container
 
-1. Build the image: `docker build -t evcc-chargeback:0.2.0 .`
+1. Build the image: `docker build -t evcc-chargeback:0.3.0 .`
 2. Copy `deploy/compose.yaml` to a directory outside this repository.
 3. Copy `.env.example` to `.env` in that directory and fill in the values, also the SMTP password.
 4. Make `.env` readable for you only: `chmod 600 .env`.

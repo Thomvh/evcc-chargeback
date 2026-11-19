@@ -1,6 +1,6 @@
 [project]
 name = "evcc-chargeback"
-version = "0.2.0"
+version = "0.3.0"
 description = "Monthly statement for the home charging cost of a company car, from evcc session data"
 requires-python = ">=3.12"
 license = "MIT"

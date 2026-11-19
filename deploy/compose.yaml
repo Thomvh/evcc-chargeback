@@ -1,7 +1,7 @@
 # Copy this file to a directory outside the repository. Put .env next to it (see the README).
 services:
   evcc-chargeback:
-    image: evcc-chargeback:0.2.0
+    image: evcc-chargeback:0.3.0
     restart: unless-stopped
     env_file: .env
     volumes:

@@ -1,0 +1,54 @@
+name: evcc chargeback
+version: "0.3.0"
+slug: evcc_chargeback
+description: Monthly statement for the home charging cost of a company car, from evcc session data
+url: https://github.com/Thomvh/evcc-chargeback
+arch:
+  - aarch64
+  - amd64
+boot: auto
+map:
+  - type: share
+    read_only: false
+options:
+  evcc_url: http://49686a9f-evcc:7070
+  evcc_vehicle: ""
+  price_basis: evcc
+  claimant_name: ""
+  claimant_iban: ""
+  payer_name: ""
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_password: ""
+  mail_from: ""
+  mail_to: ""
+  run_day: 2
+  run_at: "07:00"
+  allow_incomplete: false
+schema:
+  evcc_url: url
+  evcc_vehicle: str
+  vehicle_label: "str?"
+  evcc_identifiers: "str?"
+  price_basis: list(evcc|agreed)
+  agreement_ref: "str?"
+  agreed_tariffs: "str?"
+  claimant_name: str
+  claimant_address: "str?"
+  claimant_iban: str
+  payer_name: str
+  payer_address: "str?"
+  smtp_host: str
+  smtp_port: port
+  smtp_user: str
+  smtp_password: password
+  mail_from: str
+  mail_to: str
+  mail_cc: "str?"
+  alert_to: "str?"
+  run_day: int(1,28)
+  run_at: match(^[0-2][0-9]:[0-5][0-9]$)
+  first_period: "match(^[0-9]{4}-[01][0-9]$)?"
+  billing_tz: "str?"
+  allow_incomplete: bool

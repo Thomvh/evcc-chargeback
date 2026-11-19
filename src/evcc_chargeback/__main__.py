@@ -37,6 +37,22 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
+def load_options() -> None:
+    """Take values from the JSON file in EVCC_CHARGEBACK_OPTIONS, as written by the Home Assistant Supervisor.
+
+    The key `smtp_host` sets SMTP_HOST. A variable that is already in the environment keeps its value, and an
+    empty option counts as not set.
+    """
+    path = os.environ.get("EVCC_CHARGEBACK_OPTIONS")
+    if not path:
+        return
+    for key, value in json.loads(Path(path).read_text()).items():
+        if value is None or value == "":
+            continue
+        text = str(value).lower() if isinstance(value, bool) else str(value)
+        os.environ.setdefault(key.upper(), text)
+
+
 def names(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
@@ -153,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.schedule and (args.period or args.dry_run or args.force):
         parser.error("--schedule does not go together with other options")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_options()
 
     if args.schedule:
         schedule()
