@@ -347,6 +347,39 @@ def test_markers_move_to_a_new_state_folder(run, monkeypatch, tmp_path):
     assert len(mails) == 1 and (tmp_path / "state" / "EV-2026-10.sent").exists()
 
 
+def test_draft_does_not_move_markers(run, monkeypatch, tmp_path):
+    out, mails, _ = run
+    cli.create_and_send(OCTOBER)
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "elsewhere"))
+    cli.create_and_send(OCTOBER, dry_run=True)
+    assert (out / "EV-2026-10.sent").exists()
+    monkeypatch.delenv("STATE_DIR")
+    cli.create_and_send(OCTOBER)
+    assert len(mails) == 1
+
+
+def test_unreadable_password_file_leaves_no_marker(run, monkeypatch, tmp_path):
+    out, mails, _ = run
+    monkeypatch.setenv("SMTP_PASSWORD_FILE", str(tmp_path / "missing"))
+    with pytest.raises(OSError):
+        cli.create_and_send(OCTOBER)
+    assert mails == [] and list(out.glob("*.sending")) == []
+
+
+def test_valid_settings_that_look_unusual_pass(run, monkeypatch, tmp_path):
+    monkeypatch.setenv("EVCC_URL", "HTTP://evcc.local:7070")
+    monkeypatch.setenv("MAIL_TO", '"accounts..payable:eu"@example.org')
+    monkeypatch.setenv("ALERT_TO", "not an address")  # only the schedule uses it
+    basis = tmp_path / "basis"
+    basis.write_text("evcc\n")
+    monkeypatch.setenv("PRICE_BASIS", "agreed")
+    monkeypatch.setenv("PRICE_BASIS_FILE", str(basis))
+    cli.check_config(mail=True)
+    monkeypatch.setenv("EVCC_URL", "http://:7070")
+    with pytest.raises(SystemExit, match="EVCC_URL"):
+        cli.check_config(mail=True)
+
+
 def test_sleep_uses_elapsed_time_across_the_clock_change():
     now = datetime(2027, 3, 28, 1, 50, tzinfo=AMSTERDAM)
     run_at = next_run(now, "03:15")

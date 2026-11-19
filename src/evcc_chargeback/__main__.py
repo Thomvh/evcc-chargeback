@@ -11,10 +11,12 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from . import mailer
@@ -67,7 +69,8 @@ def vehicles() -> list[str]:
     return found
 
 
-ADDRESS = re.compile(r"[^@\s<>.]+(\.[^@\s<>.]+)*@[^@\s<>.]+(\.[^@\s<>.]+)+")
+# The part before the @ is words with single dots between them, or a text between quotes.
+ADDRESS = re.compile(r"""([^@\s<>."]+(\.[^@\s<>."]+)*|"[^"\r\n]+")@[^@\s<>.]+(\.[^@\s<>.]+)+""")
 
 
 def addresses(name: str, required: bool = False) -> list[str]:
@@ -104,8 +107,9 @@ def run_day() -> int:
 
 def evcc_url() -> str:
     url = env("EVCC_URL")
-    if not re.fullmatch(r"https?://[^\s/]+.*", url):
-        raise SystemExit(f"EVCC_URL {url!r} must start with http:// or https://")
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        raise SystemExit(f"EVCC_URL {url!r} must be an address such as http://evcc.local:7070")
     return url
 
 
@@ -149,13 +153,12 @@ def check_config(mail: bool, scheduled: bool = False) -> None:
     """Stop with one message that lists all the faults in the settings that this run uses."""
     checks = [lambda name=name: env(name) for name in STATEMENT + (MAIL if mail else ())]
     checks += [evcc_url, vehicles, price_basis, billing_zone, iban, output_dir, state_dir]
-    if os.environ.get("PRICE_BASIS", "").strip() == "agreed":
+    if env("PRICE_BASIS", "") == "agreed":
         checks += [agreed_tariffs, lambda: env("AGREEMENT_REF")]
     if mail:
-        checks += [smtp_port, sender, lambda: addresses("MAIL_TO", required=True), lambda: addresses("MAIL_CC"),
-                   lambda: addresses("ALERT_TO")]
+        checks += [smtp_port, sender, lambda: addresses("MAIL_TO", required=True), lambda: addresses("MAIL_CC")]
     if scheduled:
-        checks += [run_day, first_period, lambda: next_run(datetime.now(), env("RUN_AT", "07:00"))]
+        checks += [lambda: addresses("ALERT_TO"), run_day, first_period, lambda: next_run(datetime.now(), env("RUN_AT", "07:00"))]
     faults = []
     for check in checks:
         try:
@@ -233,16 +236,15 @@ def alert(subject: str, text: str) -> None:
     """Tell ALERT_TO that a scheduled run failed. A failed alert must not stop the schedule."""
     try:
         if recipients := addresses("ALERT_TO"):
-            send_mail(subject, text, recipients)
+            mailer.send(subject, text, recipients=recipients, **smtp_settings())
     except (Exception, SystemExit):
         log.exception("could not send the alert")
 
 
-def send_mail(subject: str, text: str, recipients: list[str], cc: list[str] | None = None,
-              attachment: Path | None = None) -> None:
-    mailer.send(subject, text, attachment=attachment, host=env("SMTP_HOST"), port=smtp_port(),
-                user=env("SMTP_USER"), password=env("SMTP_PASSWORD"), sender=sender(),
-                recipients=recipients, cc=cc)
+def smtp_settings() -> dict:
+    """Read all the mail server settings, so that a fault comes before a send starts."""
+    return {"host": env("SMTP_HOST"), "port": smtp_port(), "user": env("SMTP_USER"),
+            "password": env("SMTP_PASSWORD"), "sender": sender()}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -307,14 +309,18 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     empty = state / f"{number}.empty"
     pdf, record = output / f"{number}.pdf", output / f"{number}.json"
     sending, sent = state / f"{number}.sending", state / f"{number}.sent"
-    if state != output:
-        # Markers from before STATE_DIR was set are in the output folder; without them a month goes out again.
-        for old in output.glob(f"{number}.*"):
-            if old.suffix in (".sent", ".sending", ".empty") and not (state / old.name).exists():
-                old.rename(state / old.name)
     if not dry_run:
-        mail_to, mail_cc = addresses("MAIL_TO", required=True), addresses("MAIL_CC")
-        sender(), smtp_port()  # a fault in the mail settings must come before the marker
+        # A fault in the mail settings must come before the marker and before the old statement moves away.
+        mail = {"recipients": addresses("MAIL_TO", required=True), "cc": addresses("MAIL_CC"), **smtp_settings()}
+        if state != output:
+            # Markers from before STATE_DIR was set are in the output folder; without them a month goes out
+            # again. Copy first: the two folders can be on different disks.
+            for old in output.glob(f"{number}.*"):
+                if old.suffix in (".sent", ".sending", ".empty"):
+                    if not (state / old.name).exists():
+                        shutil.copy2(old, state / f".{old.name}.tmp")
+                        os.replace(state / f".{old.name}.tmp", state / old.name)
+                    old.unlink()
 
     if not dry_run and not force:
         if sent.exists():
@@ -398,11 +404,11 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     with sending.open("x") as marker:  # fails when another run sends this statement right now
         marker.write(datetime.now().isoformat(timespec="seconds") + "\n")
     try:
-        send_mail(
+        mailer.send(
             f"{statement.title} {period_label(period)} ({number}{', gecorrigeerd' if statement.replaces else ''})",
             f"Bijgaand de {statement.title.lower()} van {period_label(period)} voor {statement.vehicle_label}.\n\n"
             f"Totaal: {euro(statement.total)}, over te maken naar {statement.iban} o.v.v. {number}.\n",
-            mail_to, mail_cc, pdf,
+            attachment=pdf, **mail,
         )
     except mailer.NotSent:
         # The server did not accept the message, so the next run can try again.
