@@ -17,9 +17,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from . import mailer
-from .cdr import build_export, write_csv
 from .pricing import Tariff, parse_tariffs
-from .sessions import doubtful_sessions, fetch_period, fetch_year, open_sessions, select_sessions
+from .sessions import doubtful_sessions, fetch_period, open_sessions, select_sessions
 from .statement import Party, Statement, euro, period_label, render_pdf, statement_number
 
 log = logging.getLogger("evcc_chargeback")
@@ -150,19 +149,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--force", action="store_true", help="make and send again when the period was already sent")
     parser.add_argument("--schedule", action="store_true",
                         help="keep running and send the previous month from day RUN_DAY at RUN_AT")
-    parser.add_argument("--cdr", type=int, metavar="YEAR",
-                        help="write all sessions of the year as CSV (charge detail records), then stop")
     args = parser.parse_args(argv)
-    cdr = args.cdr is not None
-    if (args.schedule or cdr) and (args.period or args.dry_run or args.force or (args.schedule and cdr)):
-        parser.error("--schedule and --cdr do not go together with other options")
-    if cdr and not 2000 <= args.cdr <= 2100:
-        parser.error("--cdr takes a year, for example 2026")
+    if args.schedule and (args.period or args.dry_run or args.force):
+        parser.error("--schedule does not go together with other options")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-    if cdr:
-        export_cdr(args.cdr)
-    elif args.schedule:
+    if args.schedule:
         schedule()
     else:
         check_config(mail=not args.dry_run)
@@ -174,15 +166,6 @@ def output_dir() -> Path:
     output = Path(env("OUTPUT_DIR", "output"))
     output.mkdir(parents=True, exist_ok=True)
     return output
-
-
-def export_cdr(year: int) -> None:
-    raw = fetch_year(env("EVCC_URL"), year)
-    export = build_export(raw, year, names(env("EVCC_LOADPOINTS", "")))
-    path = write_csv(export, output_dir() / f"CDR-{year}.csv")
-    log.info("wrote %s: %d sessions, %s kWh", path, len(export.records), export.total_kwh)
-    if export.running:
-        log.warning("not in the file, still running: sessions %s", export.running)
 
 
 def write_atomic(path: Path, data: bytes) -> None:

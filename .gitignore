@@ -1,6 +1,5 @@
 .env
 *.pdf
-*.csv
 smtp_password
 __pycache__/
 .venv/

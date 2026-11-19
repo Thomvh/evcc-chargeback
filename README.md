@@ -6,9 +6,6 @@ Send a monthly statement for the home charging cost of a company car, from the s
 The tool is for this situation: you charge a company car at home, on your private energy contract, and evcc
 controls the charger. The company pays you back each month. The tool makes the statement and the evidence for it.
 
-It also makes a yearly session list (charge detail records) of the charge point. A Dutch ERE booking provider
-(inboekdienstverlener) can ask for such a list.
-
 The statement is in Dutch. Other languages are not available.
 
 ## What the tool does
@@ -102,7 +99,6 @@ The tool writes these files to `OUTPUT_DIR`. Keep them with your records. Use on
 | `EV-YYYY-MM.empty` | The month had no sessions of the car. Use `--force` to look again. |
 | `EV-YYYY-MM.replaced-<time>.*` | An earlier statement that `--force` replaced |
 | `EV-YYYY-MM-draft.pdf` | The result of `--dry-run`. This file is not a statement. |
-| `CDR-YYYY.csv` | The result of `--cdr YYYY` |
 
 evcc permits changes to a finished session, also without a login. The record file shows the data at the time of
 the statement.
@@ -114,12 +110,7 @@ evcc-chargeback --period 2026-10 --dry-run   # make a draft PDF for October 2026
 evcc-chargeback                               # make and send the previous month
 evcc-chargeback --period 2026-10 --force      # make and send October again, as a correction
 evcc-chargeback --schedule                    # stay active and send each month (the container default)
-evcc-chargeback --cdr 2026                    # write all sessions of 2026 to CDR-2026.csv
 ```
-
-`--cdr` writes the sessions of all cars. Set `EVCC_LOADPOINTS` to select charge points. The energy column is the
-session energy from the charge point. The meter columns are the total counter of the charge point at the start and
-the end of the session. Ask your ERE booking provider if they accept this file before you rely on it.
 
 ## Schedule
 

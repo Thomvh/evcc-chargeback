@@ -145,7 +145,6 @@ def run(tmp_path, monkeypatch):
     for name, value in config.items():
         monkeypatch.setenv(name, value)
     mails, state = [], {"raw": RAW, "fail": None}
-    monkeypatch.setattr(cli, "fetch_year", lambda *args, **kwargs: state["raw"])
     monkeypatch.setattr(cli, "fetch_period", lambda *args, **kwargs: state["raw"])
     monkeypatch.setattr(cli, "open_sessions", lambda *args, **kwargs: state.get("open", []))
 
@@ -228,12 +227,6 @@ def test_month_without_sessions_is_done_and_current_month_is_refused(run):
         cli.create_and_send(date.today().replace(day=1))
 
 
-def test_cdr_year_zero_is_refused(run):
-    with pytest.raises(SystemExit):
-        cli.main(["--cdr", "0"])
-    assert run[1] == []
-
-
 def test_open_session_stops_the_statement_but_not_the_draft(run):
     out, mails, state = run
     state["open"] = ["Carport"]
@@ -289,12 +282,6 @@ def test_evcc_basis_with_an_agreement_is_a_settlement(run, monkeypatch):
     text = PdfReader(run[0] / "EV-2026-10.pdf").pages[0].extract_text()
     assert run[1][0][0].startswith("Afrekening laadstroom") and "01-01-2027" in text
     assert "€ 4,34" in text and "teruglevertarief" in text
-
-
-def test_cdr_export_writes_all_vehicles(run):
-    out, _, _ = run
-    cli.export_cdr(2026)
-    assert len((out / "CDR-2026.csv").read_text().splitlines()) == 5
 
 
 def test_pdf_contains_total_and_reference(tmp_path):

@@ -64,15 +64,6 @@ def fetch_period(evcc_url: str, period: date) -> list[dict]:
     return list(found.values())
 
 
-def fetch_year(evcc_url: str, year: int) -> list[dict]:
-    """Read the year with December before and January after it (see `fetch_period`)."""
-    found = {}
-    for part in (fetch_sessions(evcc_url, year - 1, 12), fetch_sessions(evcc_url, year), fetch_sessions(evcc_url, year + 1, 1)):
-        for item in part:
-            found[item["id"]] = item
-    return list(found.values())
-
-
 def open_sessions(evcc_url: str, period: date, vehicles: list[str], zone: ZoneInfo, now: datetime) -> list[str]:
     """Return the loadpoints where a car has been connected since before the end of the month.
 
