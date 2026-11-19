@@ -8,6 +8,8 @@ controls the charger. The company pays you back each month. The tool makes the s
 
 The statement is in Dutch. Other languages are not available.
 
+![Example of a statement, with invented data](docs/statement.png)
+
 ## What the tool does
 
 1. It reads the finished charging sessions of the previous month from the evcc API.
@@ -92,7 +94,8 @@ The tool stops and does not try again by itself when:
 The tool writes these files to `OUTPUT_DIR`. Keep them with your records. Use one output directory for each car.
 
 The `.sent`, `.sending` and `.empty` files are markers. They go to `STATE_DIR` if you set it. Do not delete them:
-without the `.sent` marker the tool sends the statement again.
+without the `.sent` marker the tool sends the statement again. If you set `STATE_DIR` at a later time, keep
+`OUTPUT_DIR` the same: the tool then moves the markers of a month to `STATE_DIR` when it does that month.
 
 | File | Contents |
 |---|---|

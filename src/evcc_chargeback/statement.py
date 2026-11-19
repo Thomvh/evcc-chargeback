@@ -124,7 +124,8 @@ def render_pdf(statement: Statement, path: Path) -> Path:
         ],
         colWidths=[30 * mm, 144 * mm],
     )
-    meta.setStyle(TableStyle([("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"), ("LEFTPADDING", (0, 0), (-1, -1), 0)]))
+    meta.setStyle(TableStyle([("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"), ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                              ("VALIGN", (0, 0), (-1, -1), "TOP")]))
     story += [meta, Spacer(1, 6 * mm)]
 
     rows = [["Datum", "Start", "Einde", "Laadpunt", "Meter begin", "Meter eind", "kWh", "€/kWh", "Bedrag"]]

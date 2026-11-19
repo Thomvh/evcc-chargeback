@@ -29,10 +29,12 @@ MAIL = ("SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "MAIL_FROM", "MAIL_TO")
 
 
 def env(name: str, default: str | None = None) -> str:
+    """Return a setting, from the file in NAME_FILE or from NAME. An empty value counts as not set."""
     file = os.environ.get(f"{name}_FILE")
-    if file:
-        return Path(file).read_text().strip()
-    value = (os.environ.get(name) or "").strip() or default
+    value = Path(file).read_text().strip("\r\n") if file else os.environ.get(name) or ""
+    if name != "SMTP_PASSWORD":  # spaces can be part of a password
+        value = value.strip()
+    value = value or default
     if value is None:
         raise SystemExit(f"missing configuration: {name}")
     return value
@@ -58,23 +60,71 @@ def names(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
-def addresses(name: str) -> list[str]:
+def vehicles() -> list[str]:
+    found = names(env("EVCC_VEHICLE"))
+    if not found:
+        raise SystemExit("EVCC_VEHICLE has no vehicle title")
+    return found
+
+
+ADDRESS = re.compile(r"[^@\s<>.]+(\.[^@\s<>.]+)*@[^@\s<>.]+(\.[^@\s<>.]+)+")
+
+
+def addresses(name: str, required: bool = False) -> list[str]:
     """Return the mail addresses of a setting; commas, semicolons and line ends separate them."""
     found = [part.strip() for part in re.split(r"[,;\n]", env(name, "")) if part.strip()]
     for address in found:
-        if not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", address):
+        if not ADDRESS.fullmatch(address):
             raise SystemExit(f"{name}: {address!r} is not a mail address")
+    if required and not found:
+        raise SystemExit(f"missing configuration: {name}")
     return found
+
+
+def sender() -> str:
+    found = addresses("MAIL_FROM", required=True)
+    if len(found) != 1:
+        raise SystemExit("MAIL_FROM must be one mail address")
+    return found[0]
+
+
+def smtp_port() -> int:
+    text = env("SMTP_PORT", "587")
+    if not text.isdigit() or not 1 <= int(text) <= 65535:
+        raise SystemExit(f"SMTP_PORT {text!r} is not a port number")
+    return int(text)
+
+
+def run_day() -> int:
+    text = env("RUN_DAY", "2")
+    if not text.isdigit() or not 1 <= int(text) <= 28:
+        raise SystemExit(f"RUN_DAY {text!r} must be a day from 1 to 28")
+    return int(text)
+
+
+def evcc_url() -> str:
+    url = env("EVCC_URL")
+    if not re.fullmatch(r"https?://[^\s/]+.*", url):
+        raise SystemExit(f"EVCC_URL {url!r} must start with http:// or https://")
+    return url
 
 
 def iban() -> str:
     """Return CLAIMANT_IBAN without spaces, after the check of its control number (ISO 13616, mod 97)."""
     value = re.sub(r"\s", "", env("CLAIMANT_IBAN")).upper()
-    if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", value) or (value[:2] == "NL" and len(value) != 18):
+    form = r"NL[0-9]{2}[A-Z]{4}[0-9]{10}" if value.startswith("NL") else r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}"
+    if not re.fullmatch(form, value):
         raise SystemExit("CLAIMANT_IBAN does not have the form of an IBAN")
     if int("".join(str(int(char, 36)) for char in value[4:] + value[:4])) % 97 != 1:
         raise SystemExit("CLAIMANT_IBAN has a wrong control number; examine it for a typing error")
     return value
+
+
+def agreed_tariffs() -> list[Tariff]:
+    try:
+        return parse_tariffs(env("AGREED_TARIFFS"))
+    except ValueError as error:
+        raise SystemExit(f"AGREED_TARIFFS: {error}") from None
 
 
 def price_basis() -> tuple[list[Tariff] | None, str]:
@@ -84,33 +134,35 @@ def price_basis() -> tuple[list[Tariff] | None, str]:
         return None, env("AGREEMENT_REF", "")
     if basis != "agreed":
         raise SystemExit("PRICE_BASIS must be 'agreed' or 'evcc'")
-    try:
-        return parse_tariffs(env("AGREED_TARIFFS")), env("AGREEMENT_REF")
-    except ValueError as error:
-        raise SystemExit(f"AGREED_TARIFFS: {error}") from None
+    return agreed_tariffs(), env("AGREEMENT_REF")
 
 
 def billing_zone() -> ZoneInfo:
     return ZoneInfo(env("BILLING_TZ", "Europe/Amsterdam"))
 
 
-def check_config(mail: bool) -> None:
-    """Stop with one message that lists all the configuration faults."""
+def first_period() -> date | None:
+    return parse_period(env("FIRST_PERIOD")) if env("FIRST_PERIOD", "") else None
+
+
+def check_config(mail: bool, scheduled: bool = False) -> None:
+    """Stop with one message that lists all the faults in the settings that this run uses."""
     checks = [lambda name=name: env(name) for name in STATEMENT + (MAIL if mail else ())]
-    checks += [price_basis, billing_zone, iban, output_dir, state_dir,
-               lambda: parse_period(env("FIRST_PERIOD")) if env("FIRST_PERIOD", "") else None,
-               lambda: next_run(datetime.now(), env("RUN_AT", "07:00")),
-               lambda: int(env("RUN_DAY", "2")), lambda: int(env("SMTP_PORT", "587"))]
+    checks += [evcc_url, vehicles, price_basis, billing_zone, iban, output_dir, state_dir]
+    if os.environ.get("PRICE_BASIS", "").strip() == "agreed":
+        checks += [agreed_tariffs, lambda: env("AGREEMENT_REF")]
     if mail:
-        checks += [lambda: addresses("MAIL_TO") or env("MAIL_TO"), lambda: addresses("MAIL_FROM"),
-                   lambda: addresses("MAIL_CC"), lambda: addresses("ALERT_TO")]
+        checks += [smtp_port, sender, lambda: addresses("MAIL_TO", required=True), lambda: addresses("MAIL_CC"),
+                   lambda: addresses("ALERT_TO")]
+    if scheduled:
+        checks += [run_day, first_period, lambda: next_run(datetime.now(), env("RUN_AT", "07:00"))]
     faults = []
     for check in checks:
         try:
             check()
         except SystemExit as fault:
             faults.append(str(fault))
-        except (ValueError, KeyError, OSError) as fault:
+        except (ValueError, KeyError, OSError, argparse.ArgumentTypeError) as fault:
             faults.append(f"{type(fault).__name__}: {fault}")
     if faults:
         raise SystemExit("configuration faults:\n- " + "\n- ".join(dict.fromkeys(faults)))
@@ -122,7 +174,8 @@ def previous_month(today: date) -> date:
 
 def parse_period(value: str) -> date:
     if not re.fullmatch(r"20[0-9]{2}-(0[1-9]|1[0-2])", value):
-        raise ValueError(f"{value!r} is not a month; use YYYY-MM, for example 2027-01")
+        # argparse shows the text of this error type to the user.
+        raise argparse.ArgumentTypeError(f"{value!r} is not a month; use YYYY-MM, for example 2027-01")
     return date(int(value[:4]), int(value[5:]), 1)
 
 
@@ -158,11 +211,10 @@ def schedule() -> None:
     The sent marker makes the runs after a successful send do nothing, so a failed run (evcc down, a session
     still running) is retried the next day.
     """
-    check_config(mail=True)
-    run_day, run_at, zone = int(env("RUN_DAY", "2")), env("RUN_AT", "07:00"), billing_zone()
-    first = parse_period(env("FIRST_PERIOD")) if env("FIRST_PERIOD", "") else None
+    check_config(mail=True, scheduled=True)
+    day, run_at, zone, first = run_day(), env("RUN_AT", "07:00"), billing_zone(), first_period()
     while True:  # the first pass is at the start, so a restart after RUN_AT does not skip a day
-        for period in due_periods(datetime.now(zone).date(), run_day, first):
+        for period in due_periods(datetime.now(zone).date(), day, first):
             try:
                 create_and_send(period)
             except (Exception, SystemExit) as error:
@@ -172,25 +224,24 @@ def schedule() -> None:
         run = next_run(datetime.now(zone), run_at)
         log.info("next run at %s", run.isoformat(timespec="minutes"))
         # Sleep in steps, so a clock change or a suspended host does not shift the run.
-        while (left := (run - datetime.now(zone)).total_seconds()) > 0:
+        # Elapsed time, not clock time: the two differ in the night that the clock changes.
+        while (left := run.timestamp() - time.time()) > 0:
             time.sleep(min(left, 3600))
 
 
 def alert(subject: str, text: str) -> None:
     """Tell ALERT_TO that a scheduled run failed. A failed alert must not stop the schedule."""
-    recipients = addresses("ALERT_TO")
-    if not recipients:
-        return
     try:
-        send_mail(subject, text, recipients)
-    except Exception:
+        if recipients := addresses("ALERT_TO"):
+            send_mail(subject, text, recipients)
+    except (Exception, SystemExit):
         log.exception("could not send the alert")
 
 
 def send_mail(subject: str, text: str, recipients: list[str], cc: list[str] | None = None,
               attachment: Path | None = None) -> None:
-    mailer.send(subject, text, attachment=attachment, host=env("SMTP_HOST"), port=int(env("SMTP_PORT", "587")),
-                user=env("SMTP_USER"), password=env("SMTP_PASSWORD"), sender=addresses("MAIL_FROM")[0],
+    mailer.send(subject, text, attachment=attachment, host=env("SMTP_HOST"), port=smtp_port(),
+                user=env("SMTP_USER"), password=env("SMTP_PASSWORD"), sender=sender(),
                 recipients=recipients, cc=cc)
 
 
@@ -256,6 +307,14 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     empty = state / f"{number}.empty"
     pdf, record = output / f"{number}.pdf", output / f"{number}.json"
     sending, sent = state / f"{number}.sending", state / f"{number}.sent"
+    if state != output:
+        # Markers from before STATE_DIR was set are in the output folder; without them a month goes out again.
+        for old in output.glob(f"{number}.*"):
+            if old.suffix in (".sent", ".sending", ".empty") and not (state / old.name).exists():
+                old.rename(state / old.name)
+    if not dry_run:
+        mail_to, mail_cc = addresses("MAIL_TO", required=True), addresses("MAIL_CC")
+        sender(), smtp_port()  # a fault in the mail settings must come before the marker
 
     if not dry_run and not force:
         if sent.exists():
@@ -269,12 +328,12 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
                                f"--force to send again or rename {sending.name} to {sent.name}")
 
     tariffs, agreement = price_basis()
-    vehicles = names(env("EVCC_VEHICLE"))
+    cars = vehicles()
     # Read the connection state first: a car that disconnects after this is in the session list that follows.
-    waiting = open_sessions(env("EVCC_URL"), period, vehicles, zone, datetime.now(zone))
-    raw = fetch_period(env("EVCC_URL"), period)
+    waiting = open_sessions(evcc_url(), period, cars, zone, datetime.now(zone))
+    raw = fetch_period(evcc_url(), period)
     problems = []
-    if doubtful := doubtful_sessions(raw, vehicles, names(env("EVCC_IDENTIFIERS", "")), period, zone):
+    if doubtful := doubtful_sessions(raw, cars, names(env("EVCC_IDENTIFIERS", "")), period, zone):
         problems.append(f"sessions {doubtful} have no vehicle, or another vehicle than their RFID tag says; "
                         f"correct the vehicle of these sessions in evcc")
     if waiting:
@@ -284,8 +343,8 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
         if not dry_run:
             raise ValueError("; ".join(problems) + " (or set ALLOW_INCOMPLETE=true)")
         log.warning("the draft is not final: %s", "; ".join(problems))
-    sessions = select_sessions(raw, vehicles, period, tariffs, zone)
-    log.info("%s: %d sessions of %s", number, len(sessions), ", ".join(vehicles))
+    sessions = select_sessions(raw, cars, period, tariffs, zone)
+    log.info("%s: %d sessions of %s", number, len(sessions), ", ".join(cars))
     if not sessions:
         log.info("no sessions in %s, nothing to send", period_label(period))
         if not dry_run:
@@ -300,7 +359,7 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
         claimant=Party(env("CLAIMANT_NAME"), env("CLAIMANT_ADDRESS", "").replace("\\n", "\n")),
         payer=Party(env("PAYER_NAME"), env("PAYER_ADDRESS", "").replace("\\n", "\n")),
         iban=iban(),
-        vehicle_label=env("VEHICLE_LABEL", vehicles[0]),
+        vehicle_label=env("VEHICLE_LABEL", cars[0]),
         sessions=sessions,
         agreement=agreement,
         fixed_tariff=tariffs is not None,
@@ -334,9 +393,6 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     }, indent=1).encode())
     log.info("wrote %s and %s, total %s", pdf, record.name, euro(statement.total))
 
-    recipients = addresses("MAIL_TO")  # a fault in an address must come before the marker
-    if not recipients:
-        raise SystemExit("missing configuration: MAIL_TO")
     if force:
         sending.unlink(missing_ok=True)
     with sending.open("x") as marker:  # fails when another run sends this statement right now
@@ -346,7 +402,7 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
             f"{statement.title} {period_label(period)} ({number}{', gecorrigeerd' if statement.replaces else ''})",
             f"Bijgaand de {statement.title.lower()} van {period_label(period)} voor {statement.vehicle_label}.\n\n"
             f"Totaal: {euro(statement.total)}, over te maken naar {statement.iban} o.v.v. {number}.\n",
-            recipients, addresses("MAIL_CC"), pdf,
+            mail_to, mail_cc, pdf,
         )
     except mailer.NotSent:
         # The server did not accept the message, so the next run can try again.

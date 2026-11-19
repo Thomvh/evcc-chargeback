@@ -298,9 +298,59 @@ def test_config_check_lists_all_faults(run, monkeypatch):
     monkeypatch.setenv("RUN_AT", "25:00")
     monkeypatch.delenv("PAYER_NAME")
     with pytest.raises(SystemExit) as fault:
-        cli.check_config(mail=True)
+        cli.check_config(mail=True, scheduled=True)
+    cli_fault = str(fault.value)
+    monkeypatch.setenv("RUN_AT", "07:00")
+    monkeypatch.setenv("FIRST_PERIOD", "")
+    monkeypatch.setenv("PAYER_NAME", "Holding B.V.")
+    monkeypatch.setenv("CLAIMANT_IBAN", "NL91ABNA0417164300")
+    monkeypatch.setenv("MAIL_TO", "a@example.org")
+    monkeypatch.setenv("RUN_AT", "25:00")
+    cli.check_config(mail=False)  # a one-off draft does not use the schedule settings
+    monkeypatch.setenv("RUN_AT", "07:00")
+    for name, value, part in (("EVCC_VEHICLE", ",", "EVCC_VEHICLE"), ("MAIL_FROM", ",", "MAIL_FROM"),
+                              ("MAIL_FROM", "a@example.org,b@example.org", "one mail address"),
+                              ("MAIL_TO", ";", "MAIL_TO"), ("MAIL_TO", "a..b@example.org", "a..b"),
+                              ("SMTP_PORT", "70000", "70000"), ("RUN_DAY", "32", "RUN_DAY"),
+                              ("EVCC_URL", "evcc.local:7070", "http"),
+                              ("CLAIMANT_IBAN", "NL14ABNAA417164300", "form of an IBAN")):
+        with monkeypatch.context() as patch:
+            patch.setenv(name, value)
+            with pytest.raises(SystemExit, match=part):
+                cli.check_config(mail=True, scheduled=True)
+    cli.check_config(mail=True, scheduled=True)
     for part in ("PAYER_NAME", "CLAIMANT_IBAN", "not-an-address", "0000-01", "25:00"):
-        assert part in str(fault.value)
+        assert part in cli_fault
+
+
+def test_agreed_basis_reports_tariffs_and_reference(run, monkeypatch):
+    monkeypatch.setenv("PRICE_BASIS", "agreed")
+    monkeypatch.setenv("AGREED_TARIFFS", "nonsense")
+    with pytest.raises(SystemExit) as fault:
+        cli.check_config(mail=True)
+    assert "AGREED_TARIFFS" in str(fault.value) and "AGREEMENT_REF" in str(fault.value)
+
+
+def test_bad_sender_leaves_no_marker(run, monkeypatch):
+    out, mails, _ = run
+    monkeypatch.setenv("MAIL_FROM", ",")
+    with pytest.raises(SystemExit):
+        cli.create_and_send(OCTOBER)
+    assert mails == [] and list(out.glob("*.sending")) == []
+
+
+def test_markers_move_to_a_new_state_folder(run, monkeypatch, tmp_path):
+    out, mails, _ = run
+    cli.create_and_send(OCTOBER)
+    monkeypatch.setenv("STATE_DIR", str(tmp_path / "state"))
+    cli.create_and_send(OCTOBER)
+    assert len(mails) == 1 and (tmp_path / "state" / "EV-2026-10.sent").exists()
+
+
+def test_sleep_uses_elapsed_time_across_the_clock_change():
+    now = datetime(2027, 3, 28, 1, 50, tzinfo=AMSTERDAM)
+    run_at = next_run(now, "03:15")
+    assert run_at.timestamp() - now.timestamp() == 25 * 60
 
 
 def test_addresses_split_on_commas_semicolons_and_lines(run, monkeypatch):
