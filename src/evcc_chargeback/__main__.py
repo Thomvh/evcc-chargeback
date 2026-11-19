@@ -43,10 +43,10 @@ def names(value: str) -> list[str]:
 
 
 def price_basis() -> tuple[list[Tariff] | None, str]:
-    """Return the agreed tariffs with the agreement reference, or (None, "") for the cost that evcc recorded."""
+    """Return the agreed tariffs (None = the value that evcc recorded) and the agreement reference."""
     basis = env("PRICE_BASIS")
     if basis == "evcc":
-        return None, ""
+        return None, env("AGREEMENT_REF", "")
     if basis != "agreed":
         raise SystemExit("PRICE_BASIS must be 'agreed' or 'evcc'")
     try:
@@ -260,6 +260,7 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
         vehicle_label=env("VEHICLE_LABEL", vehicles[0]),
         sessions=sessions,
         agreement=agreement,
+        fixed_tariff=tariffs is not None,
         replaces=earlier_send(sent),
     )
     if dry_run:

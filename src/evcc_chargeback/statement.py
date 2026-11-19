@@ -26,7 +26,7 @@ FOOTER_COMMON = (
 )
 FOOTER_AGREED = "Het bedrag per sessie is het aantal kWh maal het overeengekomen tarief. " + FOOTER_COMMON
 FOOTER_EVCC = (
-    "Het bedrag per sessie is de energiekosten zoals vastgelegd door evcc: netstroom tegen het nettarief van "
+    "Het bedrag per sessie is de waarde zoals vastgelegd door evcc: netstroom tegen het nettarief van "
     "dat moment, eigen zonne- en batterijstroom tegen het teruglevertarief. " + FOOTER_COMMON
 )
 
@@ -47,12 +47,20 @@ class Statement:
     iban: str
     vehicle_label: str
     sessions: list[Session]
-    agreement: str = ""  # reference to the written agreement that sets the tariff; empty = the cost from evcc
+    agreement: str = ""  # reference to the written agreement between the parties; empty = a plain cost claim
+    fixed_tariff: bool = False  # True: kWh times the agreed tariff; False: the value that evcc recorded
     replaces: str = ""  # send date of the earlier version that this statement corrects
 
     @property
     def title(self) -> str:
         return "Afrekening laadstroom" if self.agreement else "Declaratie laadkosten"
+
+    @property
+    def basis(self) -> str:
+        if self.fixed_tariff:
+            return f"Tarief per kWh volgens {self.agreement}"
+        value = "Waarde per laadsessie zoals vastgelegd door evcc"
+        return f"{value}, volgens {self.agreement}" if self.agreement else value
 
     @property
     def total(self) -> Decimal:
@@ -110,8 +118,7 @@ def render_pdf(statement: Statement, path: Path) -> Path:
             ["Datum", f"{statement.issue_date:%d-%m-%Y}"],
             ["Periode", period_label(statement.period)],
             ["Auto", statement.vehicle_label],
-            ["Grondslag", f"Tarief per kWh volgens {statement.agreement}" if statement.agreement
-             else "Energiekosten per laadsessie zoals vastgelegd door evcc"],
+            ["Grondslag", statement.basis],
             *([["Vervangt", f"de versie die op {statement.replaces} is verzonden"]] if statement.replaces else []),
         ],
         colWidths=[30 * mm, 144 * mm],
@@ -150,7 +157,7 @@ def render_pdf(statement: Statement, path: Path) -> Path:
     story.append(Paragraph(
         f"Graag <b>{euro(statement.total)}</b> overmaken naar <b>{statement.iban}</b> "
         f"t.n.v. {statement.claimant.name}, o.v.v. <b>{statement.number}</b>.", body))
-    story += [Spacer(1, 6 * mm), Paragraph(FOOTER_AGREED if statement.agreement else FOOTER_EVCC, small)]
+    story += [Spacer(1, 6 * mm), Paragraph(FOOTER_AGREED if statement.fixed_tariff else FOOTER_EVCC, small)]
 
     doc.build(story)
     return path

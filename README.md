@@ -38,11 +38,15 @@ Set `PRICE_BASIS` to one of these values. Ask your accountant which basis is cor
 | Value | Amount of a session | Title of the document |
 |---|---|---|
 | `agreed` | kWh x the tariff of the start day, from `AGREED_TARIFFS` | Afrekening laadstroom |
-| `evcc` | The cost that evcc recorded for the session | Declaratie laadkosten |
+| `evcc` with `AGREEMENT_REF` | The value that evcc recorded for the session | Afrekening laadstroom |
+| `evcc` without `AGREEMENT_REF` | The value that evcc recorded for the session | Declaratie laadkosten |
 
 `agreed` is for a written agreement between you and the company with a fixed price per kWh. Put the reference to
 the agreement in `AGREEMENT_REF`. The statement shows it. Add a new entry to `AGREED_TARIFFS` when the price
 changes: `2027-01-01:0.31,2028-01-01:0.29`.
+
+`evcc` with `AGREEMENT_REF` is for a written agreement that makes the value from evcc the price: grid energy at
+the grid price of that moment, own energy at the feed-in price. The statement shows the reference.
 
 `evcc` uses the cost that evcc calculates. evcc prices grid energy at the grid tariff of that moment. It prices
 energy from your solar panels and your home battery at the feed-in tariff. This is not the full cost price per kWh

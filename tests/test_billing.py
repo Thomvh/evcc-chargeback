@@ -283,6 +283,14 @@ def test_agreed_basis_needs_valid_tariffs(run, monkeypatch):
     assert json.loads((run[0] / "EV-2026-10.json").read_text())["total"] == "6.00"
 
 
+def test_evcc_basis_with_an_agreement_is_a_settlement(run, monkeypatch):
+    monkeypatch.setenv("AGREEMENT_REF", "de overeenkomst van 01-01-2027")
+    cli.create_and_send(OCTOBER)
+    text = PdfReader(run[0] / "EV-2026-10.pdf").pages[0].extract_text()
+    assert run[1][0][0].startswith("Afrekening laadstroom") and "01-01-2027" in text
+    assert "€ 4,34" in text and "teruglevertarief" in text
+
+
 def test_cdr_export_writes_all_vehicles(run):
     out, _, _ = run
     cli.export_cdr(2026)
