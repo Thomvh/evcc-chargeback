@@ -126,11 +126,10 @@ Do not set `RUN_AT` between 02:00 and 03:00. The change to and from summer time 
 
 1. Build the image: `docker build -t evcc-chargeback:0.2.0 .`
 2. Copy `deploy/compose.yaml` to a directory outside this repository.
-3. Copy `.env.example` to `.env` in that directory and fill in the values.
-4. Put the SMTP password in the file `smtp_password` in that directory.
-5. Give the container user access to the password file: `chown 10001 smtp_password && chmod 400 smtp_password`.
-6. Start the stack: `docker compose up -d`.
-7. Do a test: `docker compose exec evcc-chargeback evcc-chargeback --period 2026-10 --dry-run`.
+3. Copy `.env.example` to `.env` in that directory and fill in the values, also the SMTP password.
+4. Make `.env` readable for you only: `chmod 600 .env`.
+5. Start the stack: `docker compose up -d`.
+6. Do a test: `docker compose exec evcc-chargeback evcc-chargeback --period 2026-10 --dry-run`.
 
 The container must be able to connect to evcc. Use a private network (for example a VPN) or HTTPS. The evcc
 session API has no login, so do not make it available on the internet.
@@ -148,5 +147,8 @@ uv venv && uv pip install -e '.[test]'
 
 ## Configuration
 
-Give each value as an environment variable. For a secret, give a file with the `_FILE` variant (for example
-`SMTP_PASSWORD_FILE`). See `.env.example` for all values. Keep credentials out of this repository.
+Give each value as an environment variable. See `.env.example` for all values. Keep credentials out of this
+repository.
+
+Each value can also come from a file: give the path in the `_FILE` variant of the variable. For example, use
+`SMTP_PASSWORD_FILE=/run/secrets/smtp_password` with a Docker secret if you do not want the password in `.env`.
