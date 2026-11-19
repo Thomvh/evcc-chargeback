@@ -91,6 +91,9 @@ The tool stops and does not try again by itself when:
 
 The tool writes these files to `OUTPUT_DIR`. Keep them with your records. Use one output directory for each car.
 
+The `.sent`, `.sending` and `.empty` files are markers. They go to `STATE_DIR` if you set it. Do not delete them:
+without the `.sent` marker the tool sends the statement again.
+
 | File | Contents |
 |---|---|
 | `EV-YYYY-MM.pdf` | The statement that was sent |
@@ -120,7 +123,7 @@ month is due from day `RUN_DAY`. After a successful send, the next runs do nothi
 Set `FIRST_PERIOD` to the first month that the tool must send. The tool then also sends older months that are not
 sent yet. Without `FIRST_PERIOD`, the tool only tries the previous month.
 
-Do not set `RUN_AT` between 02:00 and 03:00. The change to and from summer time makes this hour unreliable.
+`RUN_AT` is a time in the time zone `BILLING_TZ`. Do not set `RUN_AT` between 02:00 and 03:00. The change to and from summer time makes this hour unreliable.
 
 ## Installation as a Home Assistant app
 
@@ -133,7 +136,8 @@ Use this when evcc runs as an app (add-on) on the same Home Assistant.
 5. Start the app and read the Log tab.
 
 The app does the schedule (`--schedule`). It writes the statements and records to the folder
-`/share/evcc-chargeback` of Home Assistant. Include this folder in your backups.
+`/share/evcc-chargeback` of Home Assistant. It keeps the markers of what was sent in its own data folder, which
+is part of the backup of the app.
 
 `evcc_url` is the address of evcc. For the evcc app this is `http://49686a9f-evcc:7070`. If your evcc app has a
 different host name, find it on the Info tab of the evcc app.

@@ -26,6 +26,15 @@ Read the full manual: https://github.com/Thomvh/evcc-chargeback
 | `billing_tz` | Time zone for the month limits. Default: `Europe/Amsterdam` |
 | `allow_incomplete` | Send also when a session has no vehicle or a car is still connected |
 
+`run_at` is a time in the time zone `billing_tz`.
+
+Home Assistant keeps the SMTP password with the other options of the app. A person who can read the app
+configuration or a backup can read the password. Use a password that is only for this mailbox.
+
 ## Files
 
-The statements and records are in the folder `/share/evcc-chargeback`.
+The statements and records are in the folder `/share/evcc-chargeback`. They are copies for you.
+
+The app keeps the markers that say which months are sent in its own data folder. This folder is part of the
+backup of the app. If you install the app again without a restore of its backup, set `first_period` to the next
+month that must be sent. If not, the app can send old months again.

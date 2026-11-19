@@ -139,7 +139,7 @@ def test_schedule_does_not_combine_with_one_off_options(run):
 def run(tmp_path, monkeypatch):
     """Configure the tool, serve RAW as the evcc sessions and collect the mails instead of sending them."""
     config = {"EVCC_URL": "http://evcc.invalid", "EVCC_VEHICLE": "Carla", "PRICE_BASIS": "evcc",
-              "CLAIMANT_NAME": "A. Person", "CLAIMANT_IBAN": "NL00TEST0123456789", "PAYER_NAME": "Holding B.V.",
+              "CLAIMANT_NAME": "A. Person", "CLAIMANT_IBAN": "NL91 abna 0417 1643 00", "PAYER_NAME": "Holding B.V.",
               "SMTP_HOST": "smtp.invalid", "SMTP_USER": "u", "SMTP_PASSWORD": "p", "MAIL_FROM": "a@example.org",
               "MAIL_TO": "b@example.org", "OUTPUT_DIR": str(tmp_path)}
     for name, value in config.items():
@@ -282,6 +282,57 @@ def test_evcc_basis_with_an_agreement_is_a_settlement(run, monkeypatch):
     text = PdfReader(run[0] / "EV-2026-10.pdf").pages[0].extract_text()
     assert run[1][0][0].startswith("Afrekening laadstroom") and "01-01-2027" in text
     assert "€ 4,34" in text and "teruglevertarief" in text
+
+
+def test_iban_is_checked_and_normalised(run, monkeypatch):
+    assert cli.iban() == "NL91ABNA0417164300"
+    monkeypatch.setenv("CLAIMANT_IBAN", "NL91ABNA0417164301")
+    with pytest.raises(SystemExit, match="control number"):
+        cli.iban()
+
+
+def test_config_check_lists_all_faults(run, monkeypatch):
+    monkeypatch.setenv("CLAIMANT_IBAN", "NL00TEST0123456789")
+    monkeypatch.setenv("MAIL_TO", "a@example.org\nnot-an-address")
+    monkeypatch.setenv("FIRST_PERIOD", "0000-01")
+    monkeypatch.setenv("RUN_AT", "25:00")
+    monkeypatch.delenv("PAYER_NAME")
+    with pytest.raises(SystemExit) as fault:
+        cli.check_config(mail=True)
+    for part in ("PAYER_NAME", "CLAIMANT_IBAN", "not-an-address", "0000-01", "25:00"):
+        assert part in str(fault.value)
+
+
+def test_addresses_split_on_commas_semicolons_and_lines(run, monkeypatch):
+    monkeypatch.setenv("MAIL_TO", "a@example.org; b@example.org\nc@example.org,")
+    assert cli.addresses("MAIL_TO") == ["a@example.org", "b@example.org", "c@example.org"]
+
+
+def test_bad_address_leaves_no_marker(run, monkeypatch):
+    out, mails, _ = run
+    monkeypatch.setenv("MAIL_TO", "broken address")
+    with pytest.raises(SystemExit):
+        cli.create_and_send(OCTOBER)
+    assert mails == [] and not (out / "EV-2026-10.sending").exists()
+
+
+def test_markers_go_to_the_state_folder(run, monkeypatch, tmp_path):
+    out, mails, _ = run
+    state = tmp_path / "state"
+    monkeypatch.setenv("STATE_DIR", str(state))
+    cli.create_and_send(OCTOBER)
+    assert (state / "EV-2026-10.sent").exists() and not (out / "EV-2026-10.sent").exists()
+    (out / "EV-2026-10.pdf").unlink()  # the copies can go; the marker still stops a second send
+    cli.create_and_send(OCTOBER)
+    assert len(mails) == 1
+
+
+def test_long_agreement_reference_stays_on_the_page(tmp_path):
+    statement = Statement("EV-2026-10", date(2026, 11, 2), OCTOBER, Party("A. Person"), Party("Holding B.V."),
+                          "NL91ABNA0417164300", "Polestar 2", select_sessions(RAW, ["Carla"], OCTOBER),
+                          agreement="de laadstroomovereenkomst tussen partijen van 1 januari 2027 <versie 2> & bijlage")
+    page = PdfReader(render_pdf(statement, tmp_path / "s.pdf")).pages[0]
+    assert "bijlage" in page.extract_text() and "<versie 2>" in page.extract_text()
 
 
 def test_options_file_fills_the_configuration(tmp_path, monkeypatch):

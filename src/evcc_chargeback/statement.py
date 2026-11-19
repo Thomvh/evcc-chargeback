@@ -1,6 +1,7 @@
 """Render the monthly cost refund statement as a PDF (Dutch labels, invoice-style layout)."""
 
 from dataclasses import dataclass
+from xml.sax.saxutils import escape
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -118,7 +119,7 @@ def render_pdf(statement: Statement, path: Path) -> Path:
             ["Datum", f"{statement.issue_date:%d-%m-%Y}"],
             ["Periode", period_label(statement.period)],
             ["Auto", statement.vehicle_label],
-            ["Grondslag", statement.basis],
+            ["Grondslag", Paragraph(escape(statement.basis), body)],
             *([["Vervangt", f"de versie die op {statement.replaces} is verzonden"]] if statement.replaces else []),
         ],
         colWidths=[30 * mm, 144 * mm],

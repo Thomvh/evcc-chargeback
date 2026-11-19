@@ -45,9 +45,9 @@ def _get(evcc_url: str, path: str, timeout: float = 30):
     return data["result"] if isinstance(data, dict) and "result" in data else data
 
 
-def fetch_sessions(evcc_url: str, year: int, month: int | None = None) -> list[dict]:
-    """Read the finished sessions of a month, or of a whole year. evcc stores a session when it ends."""
-    return _get(evcc_url, f"sessions?year={year}" + (f"&month={month}" if month else ""))
+def fetch_sessions(evcc_url: str, year: int, month: int) -> list[dict]:
+    """Read the finished sessions of a month. evcc stores a session when it ends."""
+    return _get(evcc_url, f"sessions?year={year}&month={month}")
 
 
 def fetch_period(evcc_url: str, period: date) -> list[dict]:

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -31,7 +32,7 @@ def env(name: str, default: str | None = None) -> str:
     file = os.environ.get(f"{name}_FILE")
     if file:
         return Path(file).read_text().strip()
-    value = os.environ.get(name) or default
+    value = (os.environ.get(name) or "").strip() or default
     if value is None:
         raise SystemExit(f"missing configuration: {name}")
     return value
@@ -57,6 +58,25 @@ def names(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+def addresses(name: str) -> list[str]:
+    """Return the mail addresses of a setting; commas, semicolons and line ends separate them."""
+    found = [part.strip() for part in re.split(r"[,;\n]", env(name, "")) if part.strip()]
+    for address in found:
+        if not re.fullmatch(r"[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+", address):
+            raise SystemExit(f"{name}: {address!r} is not a mail address")
+    return found
+
+
+def iban() -> str:
+    """Return CLAIMANT_IBAN without spaces, after the check of its control number (ISO 13616, mod 97)."""
+    value = re.sub(r"\s", "", env("CLAIMANT_IBAN")).upper()
+    if not re.fullmatch(r"[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}", value) or (value[:2] == "NL" and len(value) != 18):
+        raise SystemExit("CLAIMANT_IBAN does not have the form of an IBAN")
+    if int("".join(str(int(char, 36)) for char in value[4:] + value[:4])) % 97 != 1:
+        raise SystemExit("CLAIMANT_IBAN has a wrong control number; examine it for a typing error")
+    return value
+
+
 def price_basis() -> tuple[list[Tariff] | None, str]:
     """Return the agreed tariffs (None = the value that evcc recorded) and the agreement reference."""
     basis = env("PRICE_BASIS")
@@ -75,12 +95,25 @@ def billing_zone() -> ZoneInfo:
 
 
 def check_config(mail: bool) -> None:
-    for name in STATEMENT + (MAIL if mail else ()):
-        env(name)
-    price_basis()
-    billing_zone()
-    if first := env("FIRST_PERIOD", ""):
-        parse_period(first)
+    """Stop with one message that lists all the configuration faults."""
+    checks = [lambda name=name: env(name) for name in STATEMENT + (MAIL if mail else ())]
+    checks += [price_basis, billing_zone, iban, output_dir, state_dir,
+               lambda: parse_period(env("FIRST_PERIOD")) if env("FIRST_PERIOD", "") else None,
+               lambda: next_run(datetime.now(), env("RUN_AT", "07:00")),
+               lambda: int(env("RUN_DAY", "2")), lambda: int(env("SMTP_PORT", "587"))]
+    if mail:
+        checks += [lambda: addresses("MAIL_TO") or env("MAIL_TO"), lambda: addresses("MAIL_FROM"),
+                   lambda: addresses("MAIL_CC"), lambda: addresses("ALERT_TO")]
+    faults = []
+    for check in checks:
+        try:
+            check()
+        except SystemExit as fault:
+            faults.append(str(fault))
+        except (ValueError, KeyError, OSError) as fault:
+            faults.append(f"{type(fault).__name__}: {fault}")
+    if faults:
+        raise SystemExit("configuration faults:\n- " + "\n- ".join(dict.fromkeys(faults)))
 
 
 def previous_month(today: date) -> date:
@@ -88,8 +121,9 @@ def previous_month(today: date) -> date:
 
 
 def parse_period(value: str) -> date:
-    year, month = value.split("-")
-    return date(int(year), int(month), 1)
+    if not re.fullmatch(r"20[0-9]{2}-(0[1-9]|1[0-2])", value):
+        raise ValueError(f"{value!r} is not a month; use YYYY-MM, for example 2027-01")
+    return date(int(value[:4]), int(value[5:]), 1)
 
 
 def due_periods(today: date, run_day: int, first: date | None) -> list[date]:
@@ -111,38 +145,40 @@ def due_periods(today: date, run_day: int, first: date | None) -> list[date]:
 
 
 def next_run(now: datetime, run_at: str) -> datetime:
+    if not re.fullmatch(r"([01]?[0-9]|2[0-3]):[0-5][0-9]", run_at):
+        raise ValueError(f"RUN_AT {run_at!r} is not a time; use HH:MM, for example 07:00")
     hour, minute = (int(part) for part in run_at.split(":"))
     run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return run if run > now else run + timedelta(days=1)
 
 
 def schedule() -> None:
-    """Run every day at RUN_AT from day RUN_DAY of the month on.
+    """Run every day at RUN_AT (in BILLING_TZ) from day RUN_DAY of the month on.
 
     The sent marker makes the runs after a successful send do nothing, so a failed run (evcc down, a session
     still running) is retried the next day.
     """
-    run_day, run_at = int(env("RUN_DAY", "2")), env("RUN_AT", "07:00")
     check_config(mail=True)
+    run_day, run_at, zone = int(env("RUN_DAY", "2")), env("RUN_AT", "07:00"), billing_zone()
     first = parse_period(env("FIRST_PERIOD")) if env("FIRST_PERIOD", "") else None
     while True:  # the first pass is at the start, so a restart after RUN_AT does not skip a day
-        for period in due_periods(datetime.now(billing_zone()).date(), run_day, first):
+        for period in due_periods(datetime.now(zone).date(), run_day, first):
             try:
                 create_and_send(period)
             except (Exception, SystemExit) as error:
                 log.exception("%s failed; next try tomorrow", statement_number(period))
                 alert(f"evcc-chargeback: {statement_number(period)} is niet verstuurd",
                       f"{type(error).__name__}: {error}\n")
-        run = next_run(datetime.now(), run_at)
+        run = next_run(datetime.now(zone), run_at)
         log.info("next run at %s", run.isoformat(timespec="minutes"))
         # Sleep in steps, so a clock change or a suspended host does not shift the run.
-        while (left := (run - datetime.now()).total_seconds()) > 0:
+        while (left := (run - datetime.now(zone)).total_seconds()) > 0:
             time.sleep(min(left, 3600))
 
 
 def alert(subject: str, text: str) -> None:
     """Tell ALERT_TO that a scheduled run failed. A failed alert must not stop the schedule."""
-    recipients = names(env("ALERT_TO", ""))
+    recipients = addresses("ALERT_TO")
     if not recipients:
         return
     try:
@@ -154,7 +190,7 @@ def alert(subject: str, text: str) -> None:
 def send_mail(subject: str, text: str, recipients: list[str], cc: list[str] | None = None,
               attachment: Path | None = None) -> None:
     mailer.send(subject, text, attachment=attachment, host=env("SMTP_HOST"), port=int(env("SMTP_PORT", "587")),
-                user=env("SMTP_USER"), password=env("SMTP_PASSWORD"), sender=env("MAIL_FROM"),
+                user=env("SMTP_USER"), password=env("SMTP_PASSWORD"), sender=addresses("MAIL_FROM")[0],
                 recipients=recipients, cc=cc)
 
 
@@ -191,6 +227,13 @@ def write_atomic(path: Path, data: bytes) -> None:
     os.replace(temporary, path)
 
 
+def state_dir() -> Path:
+    """The folder of the markers that say what was sent. Default: the output folder."""
+    state = Path(env("STATE_DIR", "")) if env("STATE_DIR", "") else output_dir()
+    state.mkdir(parents=True, exist_ok=True)
+    return state
+
+
 def earlier_send(sent: Path) -> str:
     """Return the date of the last send of this statement, also when --force already moved its marker away."""
     markers = [sent] if sent.exists() else sorted(sent.parent.glob(f"{sent.stem}.replaced-*.sent"))
@@ -199,20 +242,20 @@ def earlier_send(sent: Path) -> str:
 
 def create_and_send(period: date, dry_run: bool = False, force: bool = False) -> None:
     """Make the statement of the month and send it. One run at a time for each output directory."""
-    with (output_dir() / ".lock").open("w") as lock:
+    with (state_dir() / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _create_and_send(period, dry_run, force)
 
 
 def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     number = statement_number(period)
-    output = output_dir()
+    output, state = output_dir(), state_dir()
     zone = billing_zone()
     if not dry_run and period >= datetime.now(zone).date().replace(day=1):
         raise ValueError(f"{period_label(period)} has not ended; only --dry-run is possible")
-    empty = output / f"{number}.empty"
+    empty = state / f"{number}.empty"
     pdf, record = output / f"{number}.pdf", output / f"{number}.json"
-    sending, sent = output / f"{number}.sending", output / f"{number}.sent"
+    sending, sent = state / f"{number}.sending", state / f"{number}.sent"
 
     if not dry_run and not force:
         if sent.exists():
@@ -256,7 +299,7 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
         period=period,
         claimant=Party(env("CLAIMANT_NAME"), env("CLAIMANT_ADDRESS", "").replace("\\n", "\n")),
         payer=Party(env("PAYER_NAME"), env("PAYER_ADDRESS", "").replace("\\n", "\n")),
-        iban=env("CLAIMANT_IBAN"),
+        iban=iban(),
         vehicle_label=env("VEHICLE_LABEL", vehicles[0]),
         sessions=sessions,
         agreement=agreement,
@@ -291,6 +334,9 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
     }, indent=1).encode())
     log.info("wrote %s and %s, total %s", pdf, record.name, euro(statement.total))
 
+    recipients = addresses("MAIL_TO")  # a fault in an address must come before the marker
+    if not recipients:
+        raise SystemExit("missing configuration: MAIL_TO")
     if force:
         sending.unlink(missing_ok=True)
     with sending.open("x") as marker:  # fails when another run sends this statement right now
@@ -300,7 +346,7 @@ def _create_and_send(period: date, dry_run: bool, force: bool) -> None:
             f"{statement.title} {period_label(period)} ({number}{', gecorrigeerd' if statement.replaces else ''})",
             f"Bijgaand de {statement.title.lower()} van {period_label(period)} voor {statement.vehicle_label}.\n\n"
             f"Totaal: {euro(statement.total)}, over te maken naar {statement.iban} o.v.v. {number}.\n",
-            names(env("MAIL_TO")), names(env("MAIL_CC", "")), pdf,
+            recipients, addresses("MAIL_CC"), pdf,
         )
     except mailer.NotSent:
         # The server did not accept the message, so the next run can try again.
